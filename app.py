@@ -1,233 +1,169 @@
-{
- "cells": [
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "id": "577bee8f-c369-41c8-a738-1361a9f6cccb",
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "# 1. 预检查代码（必须放在最顶部）\n",
-    "import os\n",
-    "import sys\n",
-    "from pathlib import Path\n",
-    "\n",
-    "DEPS_LOCK = Path(\".deps_installed\")\n",
-    "if not DEPS_LOCK.exists():\n",
-    "    print(\"正在安装依赖...\", flush=True)\n",
-    "    exit_code = os.system(\"pip install --prefer-binary -r requirements.txt\")\n",
-    "    if exit_code != 0:\n",
-    "        print(\"依赖安装失败！\", file=sys.stderr)\n",
-    "        sys.exit(1)\n",
-    "    DEPS_LOCK.touch()\n",
-    "    \n",
-    "import streamlit as st\n",
-    "import pandas as pd\n",
-    "import numpy as np\n",
-    "import plotly.graph_objects as go\n",
-    "from scipy.interpolate import griddata\n",
-    "\n",
-    "# 页面设置\n",
-    "st.set_page_config(\n",
-    "    page_title=\"车辆排放分析系统\",\n",
-    "    page_icon=\"🚗\",\n",
-    "    layout=\"wide\"\n",
-    ")\n",
-    "\n",
-    "# 自定义颜色映射函数\n",
-    "def custom_colormap(efficiency):\n",
-    "    \"\"\"创建从深蓝到深红的渐变颜色映射\"\"\"\n",
-    "    if efficiency <= 0.5:\n",
-    "        # 0-50%: 深蓝到绿色\n",
-    "        r = int(0)\n",
-    "        g = int(255 * (efficiency / 0.5))\n",
-    "        b = int(255 * (1 - efficiency / 0.5))\n",
-    "    elif efficiency <= 0.7:\n",
-    "        # 50-70%: 绿色到橘红\n",
-    "        r = int(255 * ((efficiency - 0.5) / 0.2))\n",
-    "        g = 255\n",
-    "        b = 0\n",
-    "    else:\n",
-    "        # 70-100%: 橘红到深红\n",
-    "        r = 255\n",
-    "        g = int(255 * (1 - (efficiency - 0.7) / 0.3))\n",
-    "        b = 0\n",
-    "    return f\"rgb({r},{g},{b})\"\n",
-    "\n",
-    "# 计算转化效率\n",
-    "def calculate_efficiency(upstream, downstream):\n",
-    "    \"\"\"计算转化效率并限制在0-100%之间\"\"\"\n",
-    "    # 处理除零错误\n",
-    "    with np.errstate(divide='ignore', invalid='ignore'):\n",
-    "        efficiency = (1 - downstream / upstream) * 100\n",
-    "    \n",
-    "    # 处理无效值\n",
-    "    efficiency = np.nan_to_num(efficiency, nan=0.0)\n",
-    "    \n",
-    "    # 限制在0-100%之间\n",
-    "    efficiency = np.clip(efficiency, 0, 100)\n",
-    "    return efficiency\n",
-    "\n",
-    "# 创建三维曲面图\n",
-    "def create_3d_surface(flow, temp, efficiency, pollutant_name):\n",
-    "    \"\"\"创建可交互的三维曲面图\"\"\"\n",
-    "    # 创建网格\n",
-    "    xi = np.linspace(min(flow), max(flow), 100)\n",
-    "    yi = np.linspace(min(temp), max(temp), 100)\n",
-    "    xi, yi = np.meshgrid(xi, yi)\n",
-    "    \n",
-    "    # 插值处理（填充缺失值）\n",
-    "    zi = griddata(\n",
-    "        (flow, temp), \n",
-    "        efficiency, \n",
-    "        (xi, yi), \n",
-    "        method='cubic'\n",
-    "    )\n",
-    "    \n",
-    "    # 创建颜色映射\n",
-    "    colors = np.vectorize(custom_colormap)(zi/100)\n",
-    "    \n",
-    "    # 创建3D曲面\n",
-    "    fig = go.Figure(data=[\n",
-    "        go.Surface(\n",
-    "            x=xi, y=yi, z=zi,\n",
-    "            surfacecolor=colors,\n",
-    "            colorscale=None,\n",
-    "            showscale=False,\n",
-    "            opacity=0.9,\n",
-    "            hoverinfo=\"x+y+z+name\",\n",
-    "            name=pollutant_name\n",
-    "        )\n",
-    "    ])\n",
-    "    \n",
-    "    # 设置图表布局\n",
-    "    fig.update_layout(\n",
-    "        title=f\"{pollutant_name}转化效率分析\",\n",
-    "        scene=dict(\n",
-    "            xaxis_title='流量 (m³/h)',\n",
-    "            yaxis_title='催化器温度 (°C)',\n",
-    "            zaxis_title='转化效率 (%)',\n",
-    "            zaxis=dict(range=[0, 100]),\n",
-    "            camera=dict(\n",
-    "                eye=dict(x=1.5, y=1.5, z=1.5)\n",
-    "            )\n",
-    "        ),\n",
-    "        autosize=True,\n",
-    "        height=800,\n",
-    "        margin=dict(l=0, r=0, b=0, t=50)\n",
-    "    )\n",
-    "    \n",
-    "    return fig\n",
-    "\n",
-    "# 主程序\n",
-    "def main():\n",
-    "    st.title(\"🚗 车辆排放三维分析系统\")\n",
-    "    st.markdown(\"上传车辆10Hz排放数据Excel文件，分析CO、THC、NOx的转化效率\")\n",
-    "    \n",
-    "    # 文件上传\n",
-    "    uploaded_file = st.file_uploader(\n",
-    "        \"上传Excel数据文件\", \n",
-    "        type=[\"xlsx\", \"xls\"],\n",
-    "        help=\"请确保文件格式：第一行空白，第二行为列名\"\n",
-    "    )\n",
-    "    \n",
-    "    if uploaded_file:\n",
-    "        try:\n",
-    "            # 读取Excel文件（跳过第一行空白）\n",
-    "            df = pd.read_excel(uploaded_file, header=1)\n",
-    "            \n",
-    "            # 重命名列（根据描述的顺序）\n",
-    "            df.columns = [\n",
-    "                '时间', 'Lambda', '催化器温度', \n",
-    "                'CO原排', 'CO尾排', \n",
-    "                'THC原排', 'THC尾排',\n",
-    "                'NOx原排', 'NOx尾排', '流量'\n",
-    "            ]\n",
-    "            \n",
-    "            # 数据采样（10Hz数据量太大，降采样到1Hz）\n",
-    "            df = df.iloc[::10, :]\n",
-    "            \n",
-    "            # 显示数据预览\n",
-    "            with st.expander(\"数据预览（前10行）\"):\n",
-    "                st.dataframe(df.head(10))\n",
-    "                \n",
-    "            # 计算转化效率\n",
-    "            df['CO转化率'] = calculate_efficiency(df['CO原排'], df['CO尾排'])\n",
-    "            df['THC转化率'] = calculate_efficiency(df['THC原排'], df['THC尾排'])\n",
-    "            df['NOx转化率'] = calculate_efficiency(df['NOx原排'], df['NOx尾排'])\n",
-    "            \n",
-    "            # 创建三个污染物图表\n",
-    "            pollutants = {\n",
-    "                \"CO\": df['CO转化率'],\n",
-    "                \"THC\": df['THC转化率'],\n",
-    "                \"NOx\": df['NOx转化率']\n",
-    "            }\n",
-    "            \n",
-    "            # 使用选项卡展示三个图表\n",
-    "            tab1, tab2, tab3 = st.tabs([\"CO转化率\", \"THC转化率\", \"NOx转化率\"])\n",
-    "            \n",
-    "            with tab1:\n",
-    "                fig_co = create_3d_surface(\n",
-    "                    df['流量'], \n",
-    "                    df['催化器温度'], \n",
-    "                    df['CO转化率'],\n",
-    "                    \"CO\"\n",
-    "                )\n",
-    "                st.plotly_chart(fig_co, use_container_width=True)\n",
-    "                \n",
-    "            with tab2:\n",
-    "                fig_thc = create_3d_surface(\n",
-    "                    df['流量'], \n",
-    "                    df['催化器温度'], \n",
-    "                    df['THC转化率'],\n",
-    "                    \"THC\"\n",
-    "                )\n",
-    "                st.plotly_chart(fig_thc, use_container_width=True)\n",
-    "                \n",
-    "            with tab3:\n",
-    "                fig_nox = create_3d_surface(\n",
-    "                    df['流量'], \n",
-    "                    df['催化器温度'], \n",
-    "                    df['NOx转化率'],\n",
-    "                    \"NOx\"\n",
-    "                )\n",
-    "                st.plotly_chart(fig_nox, use_container_width=True)\n",
-    "                \n",
-    "            # 添加数据统计信息\n",
-    "            st.subheader(\"转化效率统计\")\n",
-    "            col1, col2, col3 = st.columns(3)\n",
-    "            col1.metric(\"CO平均转化率\", f\"{df['CO转化率'].mean():.1f}%\")\n",
-    "            col2.metric(\"THC平均转化率\", f\"{df['THC转化率'].mean():.1f}%\")\n",
-    "            col3.metric(\"NOx平均转化率\", f\"{df['NOx转化率'].mean():.1f}%\")\n",
-    "            \n",
-    "        except Exception as e:\n",
-    "            st.error(f\"数据处理错误: {str(e)}\")\n",
-    "            st.exception(e)\n",
-    "\n",
-    "if __name__ == \"__main__\":\n",
-    "    main()"
-   ]
-  }
- ],
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python [conda env:base] *",
-   "language": "python",
-   "name": "conda-base-py"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.12.7"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 5
-}
+import streamlit as st
+import pandas as pd
+import numpy as np
+from scipy import signal
+from io import BytesIO
+import matplotlib.pyplot as plt
+
+# 设置页面配置
+st.set_page_config(
+    page_title="Excel数据降采样工具",
+    page_icon="📊",
+    layout="wide"
+)
+
+# 应用标题和说明
+st.title("📊 Excel数据降采样工具")
+st.markdown("""
+此工具用于对Excel文件中的数据进行降采样处理。  
+只需上传您的Excel文件，指定原始频率和目标频率，即可获取降采样后的数据。
+**使用说明：**
+1. 上传Excel文件（确保第一行为标题，第二行开始为数值）
+2. 设置原始采样频率和目标采样频率
+3. 查看数据预览和图表
+4. 下载处理后的文件
+""")
+
+# 文件上传部分
+uploaded_file = st.file_uploader(
+    "上传Excel文件", 
+    type=["xlsx", "xls"],
+    help="请确保Excel第一行为标题，第二行开始为数值数据"
+)
+
+if uploaded_file is not None:
+    try:
+        # 读取Excel文件
+        df = pd.read_excel(uploaded_file)
+        st.success("文件读取成功！")
+        
+        # 显示文件基本信息
+        st.subheader("文件基本信息")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("总行数", f"{len(df)}")
+        col2.metric("总列数", f"{len(df.columns)}")
+        col3.metric("数据范围", f"{df.index[0]} - {df.index[-1]}")
+        
+        # 显示原始数据预览
+        with st.expander("查看原始数据预览"):
+            st.dataframe(df)
+        
+        # 频率设置
+        st.subheader("降采样参数设置")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            original_freq = st.number_input(
+                "原始采样频率 (Hz)", 
+                min_value=0.1, 
+                max_value=1000.0, 
+                value=10.0,
+                step=0.1,
+                help="例如：10表示原始数据每秒采集10个样本"
+            )
+        
+        with col2:
+            target_freq = st.number_input(
+                "目标采样频率 (Hz)", 
+                min_value=0.1, 
+                max_value=1000.0, 
+                value=1.0,
+                step=0.1,
+                help="例如：1表示降采样后每秒保留1个样本"
+            )
+        
+        # 计算降采样比率
+        downsample_ratio = int(original_freq / target_freq)
+        
+        if downsample_ratio <= 1:
+            st.warning("目标频率必须小于原始频率才能进行降采样")
+        else:
+            st.info(f"降采样比率: 每 {downsample_ratio} 个样本保留 1 个样本")
+            
+            # 执行降采样处理
+            st.subheader("降采样处理")
+            
+            # 创建降采样后的数据框
+            downsampled_data = {}
+            
+            for column in df.columns:
+                if df[column].dtype in ['float64', 'int64']:
+                    # 对数值列进行降采样
+                    data = df[column].values
+                    downsampled_data[column] = signal.decimate(data, downsample_ratio)
+                else:
+                    # 对非数值列进行简单抽样
+                    downsampled_data[column] = df[column].iloc[::downsample_ratio].values
+            
+            # 创建降采样后的DataFrame
+            downsampled_df = pd.DataFrame(downsampled_data)
+            
+            # 显示处理结果
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**原始数据**")
+                st.dataframe(df.head(10))
+            
+            with col2:
+                st.markdown("**降采样后的数据**")
+                st.dataframe(downsampled_df.head(10))
+            
+            # 显示数据图表
+            st.subheader("数据可视化")
+            plot_col = st.selectbox("选择要绘制的列", df.columns)
+            
+            if df[plot_col].dtype in ['float64', 'int64']:
+                fig, ax = plt.subplots(2, 1, figsize=(10, 8))
+                
+                # 原始数据图表
+                ax[0].plot(df[plot_col].values, 'b-', alpha=0.7, label='原始数据')
+                ax[0].set_title(f"原始数据 ({len(df)} 个点)")
+                ax[0].grid(True)
+                ax[0].legend()
+                
+                # 降采样数据图表
+                ax[1].plot(downsampled_df[plot_col].values, 'r-', alpha=0.7, label='降采样数据')
+                ax[1].set_title(f"降采样数据 ({len(downsampled_df)} 个点)")
+                ax[1].grid(True)
+                ax[1].legend()
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+            else:
+                st.warning("选择的列不是数值类型，无法绘制图表")
+            
+            # 文件下载功能
+            st.subheader("下载处理结果")
+            
+            # 将DataFrame转换为Excel文件
+            def convert_df_to_excel(df):
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='降采样数据')
+                processed_data = output.getvalue()
+                return processed_data
+            
+            excel_data = convert_df_to_excel(downsampled_df)
+            
+            st.download_button(
+                label="下载降采样后的Excel文件",
+                data=excel_data,
+                file_name=f"downsampled_{uploaded_file.name}",
+                mime="application/vnd.ms-excel"
+            )
+    
+    except Exception as e:
+        st.error(f"处理文件时出错: {str(e)}")
+else:
+    st.info("请上传Excel文件开始处理")
+
+# 添加页脚
+st.markdown("---")
+st.markdown("### 使用说明")
+st.markdown("""
+1. **文件要求**: 确保Excel文件第一行为标题行，第二行开始为数据
+2. **频率设置**: 原始频率指数据采集时的频率，目标频率指降采样后的频率
+3. **数据处理**: 数值列会使用信号处理算法进行降采样，非数值列会进行简单抽样
+4. **结果验证**: 建议始终检查降采样后的数据是否符合预期
+""")
