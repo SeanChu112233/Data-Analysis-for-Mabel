@@ -18,13 +18,13 @@ plt.rcParams["axes.unicode_minus"] = False  # 正确显示负号
 
 # 页面配置
 st.set_page_config(
-    page_title="推出力-温度/时间条件数据分析工具",
+    page_title="推出力-温度/时间条件数据分析工具 for Mabel",
     page_icon="📊",
     layout="wide"
 )
 
 # 标题和说明
-st.title("📊 推出力-温度/时间条件数据分析工具")
+st.title("📊 推出力-温度/时间条件数据分析工具 for Mabel")
 st.markdown("""
     该工具用于分析温度(temp)、时间(time)与推出力(force)之间的关系，
     支持多种回归模型分析，并提供可视化结果。请上传包含相关数据的CSV文件。
