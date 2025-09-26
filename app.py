@@ -18,7 +18,7 @@ plt.rcParams["axes.unicode_minus"] = False  # 正确显示负号
 
 # 页面配置
 st.set_page_config(
-    page_title="团队贡献数据分析工具",
+    page_title="推出力-温度/时间条件数据分析工具",
     page_icon="📊",
     layout="wide"
 )
