@@ -139,7 +139,11 @@ def train_models(data):
     }
     
     # 4. 梯度提升树回归
-    gb_model = GradientBoostingRegressor(n_estimators=100, random_state=42)
+    gb_model = GradientBoostingRegressor( n_estimators=30,        # 减少树的数量（从100→30）
+    max_depth=3,            # 限制树深度（防止过度分裂）
+    min_samples_leaf=2,     # 增加叶节点最小样本数
+    subsample=0.8,          # 使用80%的样本训练每棵树
+    random_state=42)
     gb_model.fit(X, y)
     models["梯度提升树"] = {
         "model": gb_model,
